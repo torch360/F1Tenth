@@ -1,6 +1,4 @@
-from asyncio import proactor_events
-from multiprocessing.connection import wait
-from xml.dom.pulldom import PROCESSING_INSTRUCTION
+
 import rclpy
 from rclpy.node import Node
 
@@ -22,10 +20,11 @@ class ReactiveFollowGap(Node):
         self.drive_publisher = self.create_publisher(AckermannDriveStamped, drive_topic, 10)
         self.bubble_size = 10
         self.average_window = 4
+        print("Starting node")
         # TODO: Subscribe to LIDAR
         # TODO: Publish to drive
     
-    def moving_average(a, n):
+    def moving_average(self, a, n):
         """Return the mean of [a-n,a+n] in an array"""
         ret = np.cumsum(a, dtype=float)
         ret[n:] = ret[n:] - ret[:-n]
@@ -37,9 +36,9 @@ class ReactiveFollowGap(Node):
             2.Rejecting high values (eg. > 3m)
         """
         proc_ranges = np.array(ranges)
-        proc_ranges = np.where(proc_ranges > 3, proc_ranges, 3)
-        proc_ranges = np.where(proc_ranges < .4, proc_ranges, 0)
-        proc_ranges = moving_average(proc_ranges, self.average_window)
+        proc_ranges = np.where(proc_ranges > 3, 3, proc_ranges)
+        proc_ranges = np.where(proc_ranges < .4, 0, proc_ranges)
+        proc_ranges = self.moving_average(proc_ranges, self.average_window)
         proc_ranges = proc_ranges[180-self.bubble_size : 900 - self.bubble_size] # because the array is 4 less on either side, offset by 10 to get entire 180
         return proc_ranges
 
@@ -53,6 +52,7 @@ class ReactiveFollowGap(Node):
         ctr = 0
         curr_index = 0
         for item in free_space_ranges:
+            
             if item > 0:
                 ctr += 1
                 if ctr > end_index-start_index: #if new max reset start and end indices
@@ -71,7 +71,7 @@ class ReactiveFollowGap(Node):
 	    Naive: Choose the furthest point within ranges and go there
         """
         waypoint = np.floor(start_i + end_i / 2)
-        waypoint = waypoint - (540 - self.bubble_size)                  # recenter to middle of array             
+        waypoint = waypoint - (len(ranges)/2 - self.bubble_size)  # recenter to middle of preprocessed array           
         angle = waypoint * 0.004351851996034384         #multiply by angle increment
         return angle
 
@@ -86,15 +86,12 @@ class ReactiveFollowGap(Node):
         #Find closest point to LiDAR
         minimum = np.argmin(proc_ranges)
         #Eliminate all points inside 'bubble' (set them to zero) 
-        proc_ranges[minimum - self.bubble_size : minimum + self.bubble_size] = [0] * 2 * self.bubble_size
-        #Find max length gap 
+        proc_ranges[minimum - self.bubble_size: minimum + self.bubble_size] = 0
         start, end = self.find_max_gap(proc_ranges)
         #Find the best point in the gap 
         angle = self.find_best_point(start, end, proc_ranges)
-        print(angle, self.time_)
         if 0 < np.abs(angle) * 180/np.pi < 10:
-            velocity = 1.5
-            print("NICE")
+            velocity = 3.0
         elif 10 < np.abs(angle) * 180/np.pi < 20:
             velocity = 1.0
         else:
@@ -109,7 +106,7 @@ class ReactiveFollowGap(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    print("WallFollow Initialized")
+    print("Follow The Gap Initialized")
     reactive_node = ReactiveFollowGap()
     rclpy.spin(reactive_node)
 
